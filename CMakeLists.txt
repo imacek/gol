@@ -16,7 +16,7 @@ target_link_libraries(${PROJECT_NAME} raylib)
 #    add_custom_command(
 #        TARGET gol
 #        POST_BUILD
-#        COMMAND cv2pdb gol.exe
-#        COMMENT "Running MyApp after build"
+#        COMMAND cv2pdb -C gol.exe
+#        COMMENT "Creating PDB files"
 #    )
 #endif()
