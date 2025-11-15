@@ -8,15 +8,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(raylib 3.0 REQUIRED)
 
-add_executable(${PROJECT_NAME} src/main.cpp)
+add_executable(${PROJECT_NAME} src/main.cpp
+)
 
 target_link_libraries(${PROJECT_NAME} raylib)
 
-#if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-#    add_custom_command(
-#        TARGET gol
-#        POST_BUILD
-#        COMMAND cv2pdb -C gol.exe
-#        COMMENT "Creating PDB files"
-#    )
-#endif()
+if(${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    add_custom_command(
+        TARGET gol
+        POST_BUILD
+        COMMAND cv2pdb -C gol.exe
+        COMMENT "Creating PDB files"
+    )
+endif()
