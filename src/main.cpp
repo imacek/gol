@@ -125,8 +125,8 @@ void simulateLoop() {
 
     while (!WindowShouldClose()) {
 
-        for (int wi = 0; wi < WORKER_COUNT; wi++) {
-            workerStartSemaphores[wi].sem.release();
+        for (auto& workerStartSemaphore : workerStartSemaphores) {
+            workerStartSemaphore.sem.release();
         }
 
         // for (int wi = 0; wi < WORKER_COUNT; wi++) {
@@ -135,10 +135,10 @@ void simulateLoop() {
         //     workerCondVar[wi].notify_one();
         // }
 
-        for (int wi = 0; wi < WORKER_COUNT; wi++) {
+        for (auto& workerFinishSemaphore : workerFinishSemaphores) {
             // unique_lock lock(workerMutex[wi]);
             // workerCondVar[wi].wait(lock, [wi] { return !workerHasWork[wi]; });
-            workerFinishSemaphores[wi].sem.acquire();
+            workerFinishSemaphore.sem.acquire();
         }
 
         {
@@ -159,8 +159,8 @@ void simulateLoop() {
         }
     }
 
-    for (int wi = 0; wi < WORKER_COUNT; wi++) {
-        workerStartSemaphores[wi].sem.release();
+    for (auto& workerStartSemaphore : workerStartSemaphores) {
+        workerStartSemaphore.sem.release();
     }
 
     for (auto& worker : workers) {
