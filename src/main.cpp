@@ -8,6 +8,7 @@
 #include <mutex>
 #include <atomic>
 #include <cmath>
+#include <iostream>
 
 using namespace std;
 
@@ -53,7 +54,22 @@ int countAliveAround(const World& world, int x, int y) {
     return count;
 }
 
-void simulateLifeStep(const World& worldNow, World& worldNext, int minX = 0, int maxX = N) {
+
+mutex worldPointersMutex;
+
+struct WorldIndices {
+    uint8_t render = 0;
+    uint8_t simOld = 0;
+    uint8_t simNext = 1;
+};
+
+World worlds[3];
+WorldIndices worldIndices;
+
+void simulateLifeStep(const int minX = 0, const int maxX = N) {
+    const World& worldNow = worlds[worldIndices.simOld];
+    World& worldNext = worlds[worldIndices.simNext];
+
     for (int x = minX; x < maxX; x++) {
         for (int y = 0; y < N; y++) {
             const int count = countAliveAround(worldNow, x, y);
@@ -67,12 +83,6 @@ void simulateLifeStep(const World& worldNow, World& worldNext, int minX = 0, int
     }
 }
 
-mutex worldPointersMutex;
-
-int renderWorld = 0;
-int simWorld1 = 0;
-int simWorld2 = 1;
-World worlds[3];
 
 int simIndex = 0;
 int frameIndex = 0;
@@ -120,7 +130,7 @@ void simulateLoopWorker(const int wi) {
 
     while (!killSwitch) {
         if (bool yes = true; workCanStart[wi].compare_exchange_strong(yes, false)) {
-            simulateLifeStep(worlds[simWorld1], worlds[simWorld2], minX, maxX);
+            simulateLifeStep(minX, maxX);
             ++workFinishedCount;
         }
     }
@@ -141,7 +151,7 @@ void simulateLoop() {
             wi.store(true);
         }
 
-        simulateLifeStep(worlds[simWorld1], worlds[simWorld2], minX, maxX);
+        simulateLifeStep(minX, maxX);
 
         while (!killSwitch && workFinishedCount < WORKER_COUNT-1) { }
         workFinishedCount = 0;
@@ -156,15 +166,14 @@ void simulateLoop() {
             simDuration = durInSeconds.count();
             lastSimTime = now;
 
-            simWorld1 = simWorld2;
+            worldIndices.simOld = worldIndices.simNext;
 
-            // get empty tick
-            if (renderWorld != 0 && simWorld1 != 0) {
-                simWorld2 = 0;
-            } else if (renderWorld != 1 && simWorld1 != 1) {
-                simWorld2 = 1;
+            if (worldIndices.render != 0 && worldIndices.simOld != 0) {
+                worldIndices.simNext = 0;
+            } else if (worldIndices.render != 1 && worldIndices.simOld != 1) {
+                worldIndices.simNext = 1;
             } else {
-                simWorld2 = 2;
+                worldIndices.simNext = 2;
             }
         }
     }
@@ -175,8 +184,10 @@ void simulateLoop() {
 }
 
 int main() {
+    //cout << "LOCK " << worldIndices.is_lock_free() << endl;
+
     // Init Sim World
-    generateRandomNoise(worlds[simWorld1]);
+    generateRandomNoise(worlds[worldIndices.simOld]);
 
     InitWindow(N, N, "Game Of Life");
     SetTargetFPS(64);
@@ -192,12 +203,12 @@ int main() {
 
         {
             scoped_lock lock(worldPointersMutex);
-            renderWorld = simWorld1;
+            worldIndices.render = worldIndices.simOld;
         }
 
         localSimIndex = simIndex;
 
-        const auto& [Data] = worlds[renderWorld];
+        const auto Data = worlds[worldIndices.render].Data;
 
         for (int x = 0; x < N; x++) {
             for (int y = 0; y < N; y++) {
