@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 4.0.0)
+﻿cmake_minimum_required(VERSION 3.31.6)
 project(gol VERSION 0.1.0 DESCRIPTION "Game of Life")
 
 set(CMAKE_CXX_STANDARD 23) # Requires C++23 standard
