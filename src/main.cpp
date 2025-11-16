@@ -7,6 +7,7 @@
 #include <semaphore>
 #include <mutex>
 #include <atomic>
+#include <cmath>
 
 using namespace std;
 
@@ -76,6 +77,37 @@ World worlds[3];
 int simIndex = 0;
 int frameIndex = 0;
 
+chrono::time_point<chrono::high_resolution_clock> lastSimTime;
+float simDuration = 0.f;
+
+int GetSPS()
+{
+    constexpr int SPS_CAPTURE_FRAMES_COUNT = 30;        // 30 captures
+    constexpr float SPS_AVERAGE_TIME_SECONDS = 0.5f;    // 500 milliseconds
+    constexpr float SPS_STEP = SPS_AVERAGE_TIME_SECONDS / SPS_CAPTURE_FRAMES_COUNT;
+
+    static int index = 0;
+    static float history[SPS_CAPTURE_FRAMES_COUNT] = { 0 };
+    static float average = 0;
+    static chrono::time_point<chrono::high_resolution_clock> last;
+
+    if (simDuration == 0) return 0;
+
+    const chrono::time_point<chrono::high_resolution_clock> now = chrono::high_resolution_clock::now();
+
+    if (const chrono::duration<float> sinceLastCheck = (now - last); sinceLastCheck.count() > SPS_STEP)
+    {
+        last = now;
+        index = (index + 1) % SPS_CAPTURE_FRAMES_COUNT;
+        average -= history[index];
+        history[index] = simDuration / SPS_CAPTURE_FRAMES_COUNT;
+        average += history[index];
+    }
+
+    return static_cast<int>(roundf(1.0f / average));
+}
+
+
 constexpr int WORKER_COUNT = 10;
 
 atomic<bool> killSwitch {false};
@@ -119,6 +151,11 @@ void simulateLoop() {
 
             ++simIndex;
 
+            const chrono::time_point<chrono::high_resolution_clock> now = chrono::high_resolution_clock::now();
+            chrono::duration<float> durInSeconds {now - lastSimTime};
+            simDuration = durInSeconds.count();
+            lastSimTime = now;
+
             simWorld1 = simWorld2;
 
             // get empty tick
@@ -142,7 +179,7 @@ int main() {
     generateRandomNoise(worlds[simWorld1]);
 
     InitWindow(N, N, "Game Of Life");
-    //SetTargetFPS(64);
+    SetTargetFPS(64);
 
     thread simThread(simulateLoop);
 
@@ -174,7 +211,9 @@ int main() {
 
         DrawTexture(tex, 0, 0, WHITE);
 
-        string simDetails = format("FPS {}\tFID {}\nSPS X\tSID {} (d {})", GetFPS(), frameIndex, localSimIndex, localSimIndex-frameIndex);
+
+        string simDetails = format("FPS {}\tFID {}\nSPS {}\tSID {} (d {})",
+            GetFPS(), frameIndex, GetSPS(), localSimIndex, localSimIndex-frameIndex);
         DrawText(simDetails.c_str(), 0, 0, 30, BLACK);
 
         EndDrawing();
