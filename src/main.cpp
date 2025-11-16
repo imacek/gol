@@ -8,7 +8,6 @@
 #include <mutex>
 #include <atomic>
 #include <cmath>
-#include <iostream>
 
 using namespace std;
 
@@ -17,6 +16,62 @@ constexpr int N = 2000;
 struct World {
     bool Data[N][N];
 };
+World worlds[3];
+
+struct WorldIndices {
+    WorldIndices() = default;
+
+    explicit WorldIndices(const int store) {
+        constexpr int eightBitMask = 0xFF;
+        render = store & eightBitMask;
+        simOld = (store >> 8) & eightBitMask;
+        simNext = (store >> 16) & eightBitMask;
+    }
+
+    int toInt() const {
+        return render | (simOld << 8) | (simNext << 16);
+    }
+
+    uint8_t render = 0;
+    uint8_t simOld = 0;
+    uint8_t simNext = 1;
+};
+
+atomic<int> worldIndicesStore {WorldIndices{}.toInt()};
+
+int moveWorldRenderIndex() {
+    int store = worldIndicesStore.load();
+    WorldIndices currentWorldIndices;
+    WorldIndices newWorldIndices;
+
+    do {
+        currentWorldIndices = WorldIndices{store};
+        newWorldIndices = currentWorldIndices;
+        newWorldIndices.render = currentWorldIndices.simOld;
+    } while (!worldIndicesStore.compare_exchange_strong(store, newWorldIndices.toInt()));
+
+    return currentWorldIndices.render;
+}
+
+void moveWorldSimIndices() {
+    int store = worldIndicesStore.load();
+    WorldIndices currentWorldIndices;
+    WorldIndices newWorldIndices;
+
+    do {
+        currentWorldIndices = WorldIndices{store};
+        newWorldIndices = currentWorldIndices;
+        newWorldIndices.simOld = newWorldIndices.simNext;
+
+        if (newWorldIndices.render != 0 && newWorldIndices.simOld != 0) {
+            newWorldIndices.simNext = 0;
+        } else if (newWorldIndices.render != 1 && newWorldIndices.simOld != 1) {
+            newWorldIndices.simNext = 1;
+        } else {
+            newWorldIndices.simNext = 2;
+        }
+    } while (!worldIndicesStore.compare_exchange_strong(store, newWorldIndices.toInt()));
+}
 
 void generateRandomNoise(World& world) {
     for (int x = 0; x < N; x++) {
@@ -54,21 +109,11 @@ int countAliveAround(const World& world, int x, int y) {
     return count;
 }
 
-
-mutex worldPointersMutex;
-
-struct WorldIndices {
-    uint8_t render = 0;
-    uint8_t simOld = 0;
-    uint8_t simNext = 1;
-};
-
-World worlds[3];
-WorldIndices worldIndices;
-
 void simulateLifeStep(const int minX = 0, const int maxX = N) {
-    const World& worldNow = worlds[worldIndices.simOld];
-    World& worldNext = worlds[worldIndices.simNext];
+    WorldIndices loadedWorldIndices {worldIndicesStore.load()};
+
+    const World& worldNow = worlds[loadedWorldIndices.simOld];
+    World& worldNext = worlds[loadedWorldIndices.simNext];
 
     for (int x = minX; x < maxX; x++) {
         for (int y = 0; y < N; y++) {
@@ -88,7 +133,7 @@ int simIndex = 0;
 int frameIndex = 0;
 
 chrono::time_point<chrono::high_resolution_clock> lastSimTime;
-float simDuration = 0.f;
+atomic<float> simDuration = 0.f;
 
 int GetSPS()
 {
@@ -105,7 +150,7 @@ int GetSPS()
 
     const chrono::time_point<chrono::high_resolution_clock> now = chrono::high_resolution_clock::now();
 
-    if (const chrono::duration<float> sinceLastCheck = (now - last); sinceLastCheck.count() > SPS_STEP)
+    if (const chrono::duration<float> sinceLastCheck = now - last; sinceLastCheck.count() > SPS_STEP)
     {
         last = now;
         index = (index + 1) % SPS_CAPTURE_FRAMES_COUNT;
@@ -156,26 +201,15 @@ void simulateLoop() {
         while (!killSwitch && workFinishedCount < WORKER_COUNT-1) { }
         workFinishedCount = 0;
 
-        {
-            scoped_lock lock(worldPointersMutex);
 
-            ++simIndex;
+        const chrono::time_point<chrono::high_resolution_clock> now = chrono::high_resolution_clock::now();
+        chrono::duration<float> durInSeconds {now - lastSimTime};
+        simDuration = durInSeconds.count();
+        lastSimTime = now;
 
-            const chrono::time_point<chrono::high_resolution_clock> now = chrono::high_resolution_clock::now();
-            chrono::duration<float> durInSeconds {now - lastSimTime};
-            simDuration = durInSeconds.count();
-            lastSimTime = now;
+        moveWorldSimIndices();
 
-            worldIndices.simOld = worldIndices.simNext;
-
-            if (worldIndices.render != 0 && worldIndices.simOld != 0) {
-                worldIndices.simNext = 0;
-            } else if (worldIndices.render != 1 && worldIndices.simOld != 1) {
-                worldIndices.simNext = 1;
-            } else {
-                worldIndices.simNext = 2;
-            }
-        }
+        ++simIndex;
     }
 
     for (auto& worker : workers) {
@@ -184,31 +218,23 @@ void simulateLoop() {
 }
 
 int main() {
-    //cout << "LOCK " << worldIndices.is_lock_free() << endl;
+    WorldIndices loadedWorldIndices {worldIndicesStore.load()};
 
     // Init Sim World
-    generateRandomNoise(worlds[worldIndices.simOld]);
+    generateRandomNoise(worlds[loadedWorldIndices.simOld]);
 
     InitWindow(N, N, "Game Of Life");
-    SetTargetFPS(64);
+    //SetTargetFPS(64);
 
     thread simThread(simulateLoop);
 
     const Image img = GenImageColor(N, N, BLACK);
     const Texture2D tex = LoadTextureFromImage(img);
 
-    int localSimIndex = 0;
-
     while (!WindowShouldClose()) {
+        const uint8_t currentRenderIndex = moveWorldRenderIndex();
 
-        {
-            scoped_lock lock(worldPointersMutex);
-            worldIndices.render = worldIndices.simOld;
-        }
-
-        localSimIndex = simIndex;
-
-        const auto Data = worlds[worldIndices.render].Data;
+        const auto Data = worlds[currentRenderIndex].Data;
 
         for (int x = 0; x < N; x++) {
             for (int y = 0; y < N; y++) {
@@ -222,6 +248,7 @@ int main() {
 
         DrawTexture(tex, 0, 0, WHITE);
 
+        const int localSimIndex = simIndex;
 
         string simDetails = format("FPS {}\tFID {}\nSPS {}\tSID {} (d {})",
             GetFPS(), frameIndex, GetSPS(), localSimIndex, localSimIndex-frameIndex);
